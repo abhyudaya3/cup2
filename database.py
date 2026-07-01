@@ -251,11 +251,27 @@ def get_watching_signals() -> list[dict]:
 
 
 def get_todays_signals_df(scan_date: Optional[str] = None) -> pd.DataFrame:
+    """Today's signals excluding Cup Only — the main actionable sheet."""
     scan_date = scan_date or date.today().isoformat()
     with _conn() as con:
         return pd.read_sql(
-            "SELECT * FROM cup_handle_signals WHERE scan_date = ? "
-            "ORDER BY mtf_confluence DESC, quality_score DESC",
+            """SELECT * FROM cup_handle_signals
+               WHERE scan_date = ?
+                 AND signal_type != 'CUP ONLY'
+               ORDER BY mtf_confluence DESC, quality_score DESC""",
+            con, params=(scan_date,),
+        )
+
+
+def get_todays_early_watch_df(scan_date: Optional[str] = None) -> pd.DataFrame:
+    """Today's Cup Only signals — earlier stage, own sheet."""
+    scan_date = scan_date or date.today().isoformat()
+    with _conn() as con:
+        return pd.read_sql(
+            """SELECT * FROM cup_handle_signals
+               WHERE scan_date = ?
+                 AND signal_type = 'CUP ONLY'
+               ORDER BY quality_score DESC""",
             con, params=(scan_date,),
         )
 
