@@ -147,6 +147,41 @@ ACTIVE_TRACKING_COLUMNS = [
     ("sell_notes", "Sell Notes", 50, None),
 ]
 
+EARLY_WATCH_COLUMNS = [
+    # Compact column set — these are early-stage, no entry/exit urgency
+    ("symbol", "Symbol", 14, None),
+    ("company_name", "Company Name", 22, None),
+    ("sector", "Sector", 14, None),
+    ("timeframe", "Timeframe", 10, None),
+    ("mtf_confluence", "MTF Confluence", 12, "bool"),
+    ("quality_score", "Quality Score", 12, "num1"),
+    ("cup_start_date", "Cup Start", 12, "date"),
+    ("cup_bottom_date", "Cup Bottom", 12, "date"),
+    ("cup_end_date", "Right Rim Date", 14, "date"),
+    ("left_rim_price", "Left Rim", 10, "money"),
+    ("cup_bottom_price", "Cup Bottom Price", 14, "money"),
+    ("right_rim_price", "Right Rim Price", 14, "money"),
+    ("cup_depth_pct", "Cup Depth %", 11, "num1"),
+    ("cup_depth_class", "Cup Depth Class", 16, None),
+    ("cup_shape", "Cup Shape", 11, None),
+    ("prior_uptrend_pct", "Prior Uptrend %", 13, "num1"),
+    ("prior_uptrend_tag", "Prior Uptrend Tag", 22, None),
+    ("recovery_pct", "Recovery %", 10, "num1"),
+    ("pivot_point", "Pivot Point", 11, "money"),
+    ("current_price", "Current Price", 12, "money"),
+    ("price_vs_pivot_pct", "Price vs Pivot %", 14, "num1"),
+    ("entry_price", "Entry (if handle forms)", 18, "money"),
+    ("stop_loss_price", "Stop Loss", 11, "money"),
+    ("target1", "T1 (+20%)", 10, "money"),
+    ("target2", "T2 (Measured)", 13, "money"),
+    ("rr_t2", "R:R T2", 9, "num2"),
+    ("rs_rating", "RS Rating", 10, "num0"),
+    ("rs_trend", "RS Trend", 11, None),
+    ("rsi_val", "RSI (14)", 9, "num1"),
+    ("adx_val", "ADX (14)", 9, "num1"),
+    ("remarks", "Remarks", 30, None),
+]
+
 HISTORICAL_COLUMNS = [
     ("symbol", "Symbol", 14, None),
     ("timeframe", "Timeframe", 10, None),
@@ -168,13 +203,22 @@ HISTORICAL_COLUMNS = [
 def generate_excel_report(
     todays_signals: pd.DataFrame,
     watchlist: pd.DataFrame,
+    early_watch: pd.DataFrame,
     active_tracking: pd.DataFrame,
     historical: pd.DataFrame,
     summary_stats: dict,
     output_path: Path,
 ) -> Path:
-    """Build the full 5-sheet Excel workbook and save to output_path."""
+    """Build the full 6-sheet Excel workbook and save to output_path."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Pre-clean all dataframes: round floats to 2dp so Excel doesn't
+    # display 1112.599975585938 instead of 1112.60
+    todays_signals  = _round_floats(todays_signals)
+    watchlist       = _round_floats(watchlist)
+    early_watch     = _round_floats(early_watch)
+    active_tracking = _round_floats(active_tracking)
+    historical      = _round_floats(historical)
 
     with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
         workbook = writer.book
@@ -185,6 +229,7 @@ def generate_excel_report(
             "Today's Signals",
             sort_cols=["mtf_confluence", "quality_score"], sort_asc=[False, False],
             extra_conditional=_apply_sheet1_conditional_formats,
+            tab_color="#375623",   # dark green — actionable
         )
 
         _write_sheet(
@@ -192,12 +237,21 @@ def generate_excel_report(
             "Near Breakout Watchlist",
             sort_cols=["breakout_readiness_pct"], sort_asc=[False],
             extra_conditional=_apply_watchlist_conditional_formats,
+            tab_color="#FF8C00",   # orange — watch closely
+        )
+
+        _write_sheet(
+            writer, workbook, fmts, early_watch, EARLY_WATCH_COLUMNS,
+            "Early Watch (Cup Only)",
+            sort_cols=["quality_score"], sort_asc=[False],
+            tab_color="#4472C4",   # blue — early stage
         )
 
         _write_sheet(
             writer, workbook, fmts, active_tracking, ACTIVE_TRACKING_COLUMNS,
             "Active Tracking",
             sort_cols=["entry_date"], sort_asc=[False],
+            tab_color="#C00000",   # red — positions open
         )
 
         _write_sheet(
@@ -205,12 +259,28 @@ def generate_excel_report(
             "Historical Signals",
             sort_cols=["scan_date"], sort_asc=[False],
             extra_summary=_historical_summary_block(historical),
+            tab_color="#7F7F7F",   # grey — done
         )
 
         _write_strategy_summary(writer, workbook, fmts, summary_stats)
 
     log.info("Excel report written: %s", output_path)
     return output_path
+
+
+def _round_floats(df: pd.DataFrame, dp: int = 2) -> pd.DataFrame:
+    """
+    Round all float columns to `dp` decimal places before writing to
+    Excel. This prevents yfinance's raw float64 values (e.g.
+    1112.599975585938) from appearing in cells instead of 1112.60.
+    Non-numeric columns are untouched.
+    """
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    for col in out.select_dtypes(include="float64").columns:
+        out[col] = out[col].round(dp)
+    return out
 
 
 # ─── Formats ────────────────────────────────────────────────────────────────
@@ -253,13 +323,14 @@ def _write_sheet(
     sort_asc: list[bool] | None = None,
     extra_conditional=None,
     extra_summary: list[str] | None = None,
+    tab_color: str | None = None,
 ) -> None:
     if df is None or df.empty:
-        # Still create the sheet with headers so the workbook structure
-        # is consistent even on a day with zero signals
         empty_df = pd.DataFrame(columns=[c[0] for c in column_spec])
         empty_df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=0)
         ws = writer.sheets[sheet_name]
+        if tab_color:
+            ws.set_tab_color(tab_color)
         for i, (_, header, width, _) in enumerate(column_spec):
             ws.write(0, i, header, fmts["header"])
             ws.set_column(i, i, width)
@@ -284,6 +355,8 @@ def _write_sheet(
 
     out.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1, header=False)
     ws = writer.sheets[sheet_name]
+    if tab_color:
+        ws.set_tab_color(tab_color)
 
     for i, (_, header, width, _) in enumerate(cols_present):
         ws.write(0, i, header, fmts["header"])
@@ -470,6 +543,12 @@ def _write_strategy_summary(writer, workbook, fmts, stats: dict) -> None:
     row += 1
     ws.write(row, 0, "Total Patterns Detected")
     ws.write(row, 1, stats.get("total_patterns", 0))
+    row += 1
+    ws.write(row, 0, "  ↳ Actionable (Today's Signals sheet)")
+    ws.write(row, 1, stats.get("n_actionable", 0))
+    row += 1
+    ws.write(row, 0, "  ↳ Early Watch (Cup Only — no handle yet)")
+    ws.write(row, 1, stats.get("n_early_watch", 0))
     row += 2
 
     ws.write(row, 0, "Breakdown by Timeframe", fmts["subtitle"])
