@@ -476,14 +476,31 @@ def _update_active_tracking() -> None:
 
         db.update_signal_status(row["signal_id"], **updates)
 
-    # Check watching signals for new breakout triggers
+    # ── Auto-trigger BREAKOUT NOW signals from today's scan ──────────────
+    # Only signals classified as "BREAKOUT NOW" on this scan date are
+    # marked entry_triggered immediately — they broke out TODAY per the
+    # scanner's detection. Signals detected in earlier states (BASING,
+    # NEAR BREAKOUT, etc.) that have price >= pivot are NOT auto-triggered
+    # here; they need a fresh daily run to confirm breakout with volume.
     watching = db.get_watching_signals()
     for row in watching:
         symbol = row["symbol"]
         timeframe = row["timeframe"]
-        pivot = row.get("pivot_point")
-        if pivot is None:
+        signal_type = row.get("signal_type", "")
+        scan_date_db = row.get("scan_date", "")
+
+        # Only auto-trigger signals from today's scan that are already
+        # classified BREAKOUT NOW — they satisfied volume+price conditions
+        # at detection time. Do NOT auto-trigger historical signals whose
+        # pivot was crossed before we started tracking them.
+        if signal_type != "BREAKOUT NOW" or scan_date_db != today_str:
             continue
+
+        pivot = row.get("pivot_point")
+        entry_price = row.get("entry_price")
+        if pivot is None or entry_price is None:
+            continue
+
         daily = load_daily(symbol)
         if daily is None or daily.empty:
             continue
@@ -494,12 +511,15 @@ def _update_active_tracking() -> None:
             tf_df = resample_monthly(daily)
         if tf_df.empty:
             continue
+
         current_price = float(tf_df["Close"].iloc[-1])
         if current_price >= pivot:
             db.update_signal_status(
                 row["signal_id"],
-                entry_triggered=1, entry_date=today_str,
-                status="Triggered", current_price=current_price,
+                entry_triggered=1,
+                entry_date=today_str,
+                status="Triggered",
+                current_price=round(current_price, 2),
             )
 
 
@@ -510,35 +530,49 @@ def _build_summary_stats(
     by_timeframe: dict, by_signal_type: dict, by_rs_band: dict,
     nifty_trend: str,
 ) -> dict:
-    todays_df = db.get_todays_signals_df(scan_date)
-    top5 = []
+    todays_df   = db.get_todays_signals_df(scan_date)       # excludes Cup Only
+    early_watch = db.get_todays_early_watch_df(scan_date)   # Cup Only only
+
+    n_actionable  = len(todays_df)  if not todays_df.empty  else 0
+    n_early_watch = len(early_watch) if not early_watch.empty else 0
+
+    top5: list[dict] = []
     if not todays_df.empty and "breakout_readiness_pct" in todays_df.columns:
-        ranked = todays_df.dropna(subset=["breakout_readiness_pct"]).sort_values(
-            "breakout_readiness_pct", ascending=False
-        ).head(5)
-        top5 = ranked[["symbol", "breakout_readiness_pct", "timeframe", "signal_type"]].to_dict("records")
+        ranked = (
+            todays_df
+            .dropna(subset=["breakout_readiness_pct"])
+            .sort_values("breakout_readiness_pct", ascending=False)
+            .head(5)
+        )
+        top5 = ranked[
+            ["symbol", "breakout_readiness_pct", "timeframe", "signal_type"]
+        ].to_dict("records")
 
     return {
-        "scan_date": scan_date,
-        "total_symbols": total_symbols,
-        "total_patterns": total_patterns,
-        "by_timeframe": by_timeframe,
-        "by_signal_type": by_signal_type,
-        "by_rs_band": by_rs_band,
-        "top5_readiness": top5,
-        "nifty_trend": nifty_trend,
+        "scan_date":        scan_date,
+        "total_symbols":    total_symbols,
+        "total_patterns":   total_patterns,
+        "n_actionable":     n_actionable,
+        "n_early_watch":    n_early_watch,
+        "by_timeframe":     by_timeframe,
+        "by_signal_type":   by_signal_type,
+        "by_rs_band":       by_rs_band,
+        "top5_readiness":   top5,
+        "nifty_trend":      nifty_trend,
     }
 
 
 def _generate_report(scan_date: str, summary_stats: dict) -> None:
-    todays_signals = db.get_todays_signals_df(scan_date)
-    watchlist = db.get_near_breakout_watchlist_df()
+    todays_signals  = db.get_todays_signals_df(scan_date)
+    watchlist       = db.get_near_breakout_watchlist_df()
+    early_watch     = db.get_todays_early_watch_df(scan_date)
     active_tracking = db.get_active_tracking_df()
-    historical = db.get_historical_signals_df()
+    historical      = db.get_historical_signals_df()
 
     output_path = cfg.REPORTS_DIR / f"cup_handle_report_{scan_date}.xlsx"
     generate_excel_report(
-        todays_signals, watchlist, active_tracking, historical,
+        todays_signals, watchlist, early_watch,
+        active_tracking, historical,
         summary_stats, output_path,
     )
 
