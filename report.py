@@ -17,6 +17,8 @@ from pathlib import Path
 import pandas as pd
 
 import config as cfg
+
+import config as cfg
 from logger_utils import get_logger
 
 log = get_logger("scanner")
@@ -129,6 +131,82 @@ WATCHLIST_COLUMNS = [
     ("remarks", "Remarks", 30, None),
 ]
 
+CONFIRMED_BREAKOUT_COLUMNS = [
+    # Every field a trader needs to act immediately — complete decision
+    # package in a single row. No need to cross-reference other sheets.
+
+    # Identity & classification
+    ("symbol",                  "Symbol",               14, None),
+    ("company_name",            "Company",              22, None),
+    ("sector",                  "Sector",               14, None),
+    ("timeframe",               "Timeframe",            10, None),
+    ("mtf_confluence",          "MTF",                  7,  "bool"),
+    ("mtf_timeframes",          "MTF Timeframes",       16, None),
+    ("signal_type",             "Signal",               14, None),
+
+    # Conviction scores
+    ("breakout_readiness_pct",  "Readiness %",          12, "num0"),
+    ("readiness_reasons",       "Readiness Factors",    40, None),
+    ("quality_score",           "Quality Score",        12, "num1"),
+    ("handle_quality_subscore", "Handle Quality (/20)", 15, "num1"),
+
+    # Cup & handle structure
+    ("cup_depth_pct",           "Cup Depth %",          11, "num1"),
+    ("cup_depth_class",         "Cup Class",            14, None),
+    ("cup_shape",               "Cup Shape",            11, None),
+    ("prior_uptrend_tag",       "Prior Trend",          22, None),
+    ("handle_depth_pct",        "Handle Depth %",       13, "num1"),
+
+    # Pivot & current price
+    ("pivot_point",             "Pivot",                10, "money"),
+    ("current_price",           "Current Price",        12, "money"),
+    ("price_vs_pivot_pct",      "vs Pivot %",           10, "num1"),
+    ("volume_ratio",            "Vol Ratio",            10, "num2"),
+    ("volume_confirmed_label",  "Vol Confirmed",        13, None),
+
+    # Entry
+    ("entry_price",             "Entry Price",          11, "money"),
+    ("entry_zone_high",         "Entry Zone High",      14, "money"),
+
+    # Risk
+    ("stop_loss_price",         "Stop Loss",            10, "money"),
+    ("stop_loss_pct",           "Stop %",               9,  "num1"),
+    ("stop_loss_type",          "Stop Type",            20, None),
+    ("atr_14",                  "ATR",                  9,  "money"),
+    ("risk_per_share",          "Risk/Share ₹",         12, "money"),
+
+    # Position sizing
+    ("position_size_shares",    "Shares",               9,  "int"),
+    ("capital_required",        "Capital ₹",            12, "money0"),
+    ("risk_amount",             "Risk ₹",               10, "money0"),
+
+    # Targets & R:R
+    ("target1",                 "T1 (+20%)",            11, "money"),
+    ("target2",                 "T2 (Projected)",       14, "money"),
+    ("target3",                 "T3 (Fib 1.618x)",      15, "money"),
+    ("rr_t1",                   "R:R T1",               9,  "num2"),
+    ("rr_t2",                   "R:R T2",               9,  "num2"),
+    ("rr_t3",                   "R:R T3",               9,  "num2"),
+    ("eight_week_hold_candidate", "8-Wk Hold?",         11, "bool"),
+
+    # Technicals
+    ("rs_rating",               "RS Rating",            10, "num0"),
+    ("rs_trend",                "RS Trend",             11, None),
+    ("rs_tag",                  "RS Tag",               12, None),
+    ("rsi_val",                 "RSI",                  8,  "num1"),
+    ("adx_val",                 "ADX",                  8,  "num1"),
+    ("price_vs_ma_short_pct",   "vs 50MA %",            10, "num1"),
+
+    # Market
+    ("nifty_trend",             "Nifty Trend",          11, None),
+    ("market_note",             "Market Note",          22, None),
+
+    # Action notes
+    ("sell_notes",              "Sell Rules",           50, None),
+    ("remarks",                 "Remarks",              30, None),
+]
+
+
 ACTIVE_TRACKING_COLUMNS = [
     ("symbol", "Symbol", 14, None),
     ("timeframe", "Timeframe", 10, None),
@@ -201,6 +279,7 @@ HISTORICAL_COLUMNS = [
 
 
 def generate_excel_report(
+    confirmed_breakouts: pd.DataFrame,
     todays_signals: pd.DataFrame,
     watchlist: pd.DataFrame,
     early_watch: pd.DataFrame,
@@ -209,57 +288,67 @@ def generate_excel_report(
     summary_stats: dict,
     output_path: Path,
 ) -> Path:
-    """Build the full 6-sheet Excel workbook and save to output_path."""
+    """Build the full 7-sheet Excel workbook and save to output_path."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Pre-clean all dataframes: round floats to 2dp so Excel doesn't
-    # display 1112.599975585938 instead of 1112.60
-    todays_signals  = _round_floats(todays_signals)
-    watchlist       = _round_floats(watchlist)
-    early_watch     = _round_floats(early_watch)
-    active_tracking = _round_floats(active_tracking)
-    historical      = _round_floats(historical)
+    confirmed_breakouts = _round_floats(confirmed_breakouts)
+    todays_signals      = _round_floats(todays_signals)
+    watchlist           = _round_floats(watchlist)
+    early_watch         = _round_floats(early_watch)
+    active_tracking     = _round_floats(active_tracking)
+    historical          = _round_floats(historical)
 
     with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
         workbook = writer.book
         fmts = _build_formats(workbook)
 
+        # ── Sheet 1: Confirmed Breakouts — the most important tab ──────────
         _write_sheet(
-            writer, workbook, fmts, todays_signals, SHEET1_COLUMNS,
-            "Today's Signals",
-            sort_cols=["mtf_confluence", "quality_score"], sort_asc=[False, False],
-            extra_conditional=_apply_sheet1_conditional_formats,
-            tab_color="#375623",   # dark green — actionable
+            writer, workbook, fmts, confirmed_breakouts,
+            CONFIRMED_BREAKOUT_COLUMNS,
+            "🔥 Confirmed Breakouts",
+            sort_cols=["mtf_confluence", "breakout_readiness_pct", "quality_score"],
+            sort_asc=[False, False, False],
+            extra_conditional=_apply_confirmed_breakout_formats,
+            tab_color="#FF0000",   # red — highest urgency, act today
         )
 
         _write_sheet(
             writer, workbook, fmts, watchlist, WATCHLIST_COLUMNS,
-            "Near Breakout Watchlist",
+            "⚡ Near Breakout Watchlist",
             sort_cols=["breakout_readiness_pct"], sort_asc=[False],
             extra_conditional=_apply_watchlist_conditional_formats,
-            tab_color="#FF8C00",   # orange — watch closely
+            tab_color="#FF8C00",
+        )
+
+        _write_sheet(
+            writer, workbook, fmts, todays_signals, SHEET1_COLUMNS,
+            "📋 Today's Signals",
+            sort_cols=["mtf_confluence", "quality_score"], sort_asc=[False, False],
+            extra_conditional=_apply_sheet1_conditional_formats,
+            tab_color="#375623",
         )
 
         _write_sheet(
             writer, workbook, fmts, early_watch, EARLY_WATCH_COLUMNS,
-            "Early Watch (Cup Only)",
+            "👁 Early Watch (Cup Only)",
             sort_cols=["quality_score"], sort_asc=[False],
-            tab_color="#4472C4",   # blue — early stage
+            tab_color="#4472C4",
         )
 
         _write_sheet(
             writer, workbook, fmts, active_tracking, ACTIVE_TRACKING_COLUMNS,
-            "Active Tracking",
+            "📈 Active Tracking",
             sort_cols=["entry_date"], sort_asc=[False],
-            tab_color="#C00000",   # red — positions open
+            tab_color="#7030A0",
         )
 
         _write_sheet(
             writer, workbook, fmts, historical, HISTORICAL_COLUMNS,
-            "Historical Signals",
+            "📚 Historical Signals",
             sort_cols=["scan_date"], sort_asc=[False],
             extra_summary=_historical_summary_block(historical),
-            tab_color="#7F7F7F",   # grey — done
+            tab_color="#7F7F7F",
         )
 
         _write_strategy_summary(writer, workbook, fmts, summary_stats)
@@ -468,6 +557,135 @@ def _apply_watchlist_conditional_formats(ws, fmts, cols_present, n_rows) -> None
         idx = col_index["breakout_readiness_pct"]
         rng = f"{_xl_col(idx)}2:{_xl_col(idx)}{n_rows + 1}"
         ws.conditional_format(rng, {
+            "type": "cell", "criteria": ">=",
+            "value": cfg.READINESS_BAND_HIGH,
+            "format": fmts["green_bold"],
+        })
+        ws.conditional_format(rng, {
+            "type": "cell", "criteria": "between",
+            "minimum": cfg.READINESS_BAND_MEDIUM,
+            "maximum": cfg.READINESS_BAND_HIGH - 0.01,
+            "format": fmts["yellow_bg"],
+        })
+
+
+def _apply_confirmed_breakout_formats(ws, fmts, cols_present, n_rows) -> None:
+    """
+    Every row on the Confirmed Breakouts tab has already passed a strict
+    multi-condition filter, so the formatting focuses on highlighting
+    DEGREE of urgency rather than filtering — all rows are already worth
+    looking at.
+    """
+    if n_rows == 0:
+        return
+    col_index = {c[0]: i for i, c in enumerate(cols_present)}
+
+    def rng(name):
+        if name not in col_index:
+            return None
+        return f"{_xl_col(col_index[name])}2:{_xl_col(col_index[name])}{n_rows + 1}"
+
+    # BREAKOUT NOW → entire symbol cell bold orange (breakout happening now)
+    if all(k in col_index for k in ("signal_type", "symbol")):
+        sym_rng = rng("symbol")
+        sig_idx = col_index["signal_type"]
+        ws.conditional_format(sym_rng, {
+            "type": "formula",
+            "criteria": f'=${_xl_col(sig_idx)}2="BREAKOUT NOW"',
+            "format": fmts["orange_bold"],
+        })
+
+    # NEAR BREAKOUT → symbol bold blue (act today or tomorrow)
+    if all(k in col_index for k in ("signal_type", "symbol")):
+        sym_rng = rng("symbol")
+        sig_idx = col_index["signal_type"]
+        ws.conditional_format(sym_rng, {
+            "type": "formula",
+            "criteria": f'=${_xl_col(sig_idx)}2="NEAR BREAKOUT"',
+            "format": fmts["blue_bold"],
+        })
+
+    # Readiness % — green gradient: 100% deepest green, 80% lighter
+    if r := rng("breakout_readiness_pct"):
+        ws.conditional_format(r, {
+            "type": "3_color_scale",
+            "min_value": cfg.HCB_MIN_READINESS,
+            "mid_value": 90,
+            "max_value": 100,
+            "min_color": "#FFEB9C",
+            "mid_color": "#92D050",
+            "max_color": "#006100",
+            "min_type": "num",
+            "mid_type": "num",
+            "max_type": "num",
+        })
+
+    # Quality score banding
+    if r := rng("quality_score"):
+        ws.conditional_format(r, {
+            "type": "cell", "criteria": ">=", "value": 80,
+            "format": fmts["green_bg"],
+        })
+        ws.conditional_format(r, {
+            "type": "cell", "criteria": "between",
+            "minimum": 60, "maximum": 79.99,
+            "format": fmts["yellow_bg"],
+        })
+
+    # Volume confirmed → green, not confirmed → orange
+    if r := rng("volume_confirmed_label"):
+        ws.conditional_format(r, {
+            "type": "cell", "criteria": "==", "value": '"Yes"',
+            "format": fmts["green_bg"],
+        })
+        ws.conditional_format(r, {
+            "type": "cell", "criteria": "==", "value": '"No"',
+            "format": fmts["orange_bold"],
+        })
+
+    # MTF confluence → blue bold
+    if all(k in col_index for k in ("mtf_confluence", "symbol")):
+        sym_rng = rng("symbol")
+        mtf_idx = col_index["mtf_confluence"]
+        # Only add if not already coloured by signal_type (MTF takes second priority)
+        ws.conditional_format(rng("mtf_confluence"), {
+            "type": "cell", "criteria": "==", "value": 1,
+            "format": fmts["blue_bold"],
+        })
+
+    # Stop type = 8pct_cap → red (stop wider than ideal)
+    if r := rng("stop_loss_type"):
+        ws.conditional_format(r, {
+            "type": "cell", "criteria": "==", "value": '"8pct_cap"',
+            "format": fmts["red_text"],
+        })
+
+    # R:R T2 < 2 → orange warning
+    if r := rng("rr_t2"):
+        ws.conditional_format(r, {
+            "type": "cell", "criteria": "<", "value": cfg.MIN_RR_T2,
+            "format": fmts["orange_bold"],
+        })
+
+    # Handle quality heat: 20 = best, 10 = minimum threshold
+    if r := rng("handle_quality_subscore"):
+        ws.conditional_format(r, {
+            "type": "3_color_scale",
+            "min_value": 10, "mid_value": 15, "max_value": 20,
+            "min_color": "#FFEB9C",
+            "mid_color": "#92D050",
+            "max_color": "#006100",
+            "min_type": "num", "mid_type": "num", "max_type": "num",
+        })
+
+
+    if n_rows == 0:
+        return
+    col_index = {c[0]: i for i, c in enumerate(cols_present)}
+    if "breakout_readiness_pct" in col_index:
+        idx = col_index["breakout_readiness_pct"]
+        rng = f"{_xl_col(idx)}2:{_xl_col(idx)}{n_rows + 1}"
+        ws.conditional_format(rng, {
             "type": "cell", "criteria": ">=", "value": cfg.READINESS_BAND_HIGH,
             "format": fmts["green_bold"],
         })
@@ -543,6 +761,9 @@ def _write_strategy_summary(writer, workbook, fmts, stats: dict) -> None:
     row += 1
     ws.write(row, 0, "Total Patterns Detected")
     ws.write(row, 1, stats.get("total_patterns", 0))
+    row += 1
+    ws.write(row, 0, "  ↳ 🔥 Confirmed Breakouts (act today)", fmts["subtitle"])
+    ws.write(row, 1, stats.get("n_confirmed", 0))
     row += 1
     ws.write(row, 0, "  ↳ Actionable (Today's Signals sheet)")
     ws.write(row, 1, stats.get("n_actionable", 0))
