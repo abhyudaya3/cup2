@@ -308,6 +308,61 @@ def get_historical_signals_df() -> pd.DataFrame:
 
 
 def get_near_breakout_watchlist_df() -> pd.DataFrame:
+    """Signals in NEAR BREAKOUT or BASING state, sorted by readiness."""
+    with _conn() as con:
+        return pd.read_sql(
+            """SELECT * FROM cup_handle_signals
+               WHERE signal_type IN ('NEAR BREAKOUT', 'BASING')
+                 AND entry_triggered = 0
+               ORDER BY breakout_readiness_pct DESC,
+                        quality_score DESC
+            """, con,
+        )
+
+
+def get_confirmed_breakouts_df(scan_date: Optional[str] = None) -> pd.DataFrame:
+    """
+    High-conviction breakout signals — ALL of the following must be true:
+      • Cup & Handle pattern (has_handle = 1)
+      • Signal type in BREAKOUT NOW / NEAR BREAKOUT
+      • Breakout Readiness >= 80%
+      • Quality Score >= 60
+      • Volume ratio >= 1.40  (volume confirmation)
+      • Price within -3% to +5% of pivot  (not extended, not too far below)
+      • Handle quality subscore >= 10/20  (tight handle confirmed)
+    Sorted by: MTF confluence first, then Readiness % DESC, then Quality DESC.
+    """
+    import config as cfg
+    scan_date = scan_date or date.today().isoformat()
+    with _conn() as con:
+        return pd.read_sql(
+            """SELECT * FROM cup_handle_signals
+               WHERE scan_date = ?
+                 AND has_handle = 1
+                 AND signal_type IN ('BREAKOUT NOW', 'NEAR BREAKOUT')
+                 AND breakout_readiness_pct >= ?
+                 AND quality_score >= ?
+                 AND volume_ratio >= ?
+                 AND price_vs_pivot_pct >= ?
+                 AND price_vs_pivot_pct <= ?
+                 AND handle_quality_subscore >= ?
+               ORDER BY
+                 mtf_confluence DESC,
+                 breakout_readiness_pct DESC,
+                 quality_score DESC""",
+            con,
+            params=(
+                scan_date,
+                cfg.HCB_MIN_READINESS,
+                cfg.HCB_MIN_QUALITY,
+                cfg.HCB_MIN_VOLUME_RATIO,
+                cfg.HCB_MIN_PRICE_VS_PIVOT,
+                cfg.HCB_MAX_PRICE_VS_PIVOT,
+                cfg.HCB_MIN_HANDLE_QUALITY,
+            ),
+        )
+
+
     with _conn() as con:
         return pd.read_sql(
             """SELECT * FROM cup_handle_signals
