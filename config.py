@@ -150,7 +150,21 @@ READINESS_NEAR_PIVOT_PCT = 3.0    # within 3% of pivot, either side
 READINESS_BAND_HIGH      = 80     # >= this -> bold green
 READINESS_BAND_MEDIUM    = 50     # >= this -> yellow background
 
-# ─── Entry conditions (STRICT) ─────────────────────────────────────────────
+# ─── High-Conviction Breakout filter ("Confirmed Breakouts" tab) ─────────
+# ALL conditions must be met simultaneously for a signal to appear on
+# this tab. The idea is to produce a very short, genuinely actionable
+# list — typically 5-30 stocks on any given day. Do NOT loosen these
+# to inflate the list; the value of this tab is its selectivity.
+HCB_SIGNAL_TYPES          = {"BREAKOUT NOW", "NEAR BREAKOUT"}
+HCB_MIN_READINESS         = 80     # Breakout Readiness >= 80% (4-5 factors)
+HCB_MIN_QUALITY           = 60     # pattern must be structurally solid
+HCB_MIN_VOLUME_RATIO      = 1.40   # volume >= 140% of avg (same as entry gate)
+HCB_MAX_PRICE_VS_PIVOT    = 5.0    # not more than 5% above pivot (not extended)
+HCB_MIN_PRICE_VS_PIVOT    = -3.0   # not more than 3% below pivot (within zone)
+HCB_MIN_HANDLE_QUALITY    = 10     # handle must be tight (>= 10/20)
+HCB_REQUIRE_HANDLE        = True   # Cup Only excluded — no handle, no certainty
+
+
 BREAKOUT_BUFFER_INR        = 0.10
 BREAKOUT_BUFFER_PCT        = 0.001   # used instead of flat INR above ₹1000
 BREAKOUT_BUFFER_PRICE_CUTOFF = 1000.0
