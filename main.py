@@ -530,11 +530,13 @@ def _build_summary_stats(
     by_timeframe: dict, by_signal_type: dict, by_rs_band: dict,
     nifty_trend: str,
 ) -> dict:
-    todays_df   = db.get_todays_signals_df(scan_date)       # excludes Cup Only
-    early_watch = db.get_todays_early_watch_df(scan_date)   # Cup Only only
+    confirmed_df  = db.get_confirmed_breakouts_df(scan_date)
+    todays_df     = db.get_todays_signals_df(scan_date)
+    early_watch   = db.get_todays_early_watch_df(scan_date)
 
-    n_actionable  = len(todays_df)  if not todays_df.empty  else 0
-    n_early_watch = len(early_watch) if not early_watch.empty else 0
+    n_confirmed   = len(confirmed_df)  if not confirmed_df.empty  else 0
+    n_actionable  = len(todays_df)     if not todays_df.empty     else 0
+    n_early_watch = len(early_watch)   if not early_watch.empty   else 0
 
     top5: list[dict] = []
     if not todays_df.empty and "breakout_readiness_pct" in todays_df.columns:
@@ -552,6 +554,7 @@ def _build_summary_stats(
         "scan_date":        scan_date,
         "total_symbols":    total_symbols,
         "total_patterns":   total_patterns,
+        "n_confirmed":      n_confirmed,
         "n_actionable":     n_actionable,
         "n_early_watch":    n_early_watch,
         "by_timeframe":     by_timeframe,
@@ -563,15 +566,19 @@ def _build_summary_stats(
 
 
 def _generate_report(scan_date: str, summary_stats: dict) -> None:
-    todays_signals  = db.get_todays_signals_df(scan_date)
-    watchlist       = db.get_near_breakout_watchlist_df()
-    early_watch     = db.get_todays_early_watch_df(scan_date)
-    active_tracking = db.get_active_tracking_df()
-    historical      = db.get_historical_signals_df()
+    confirmed_breakouts = db.get_confirmed_breakouts_df(scan_date)
+    todays_signals      = db.get_todays_signals_df(scan_date)
+    watchlist           = db.get_near_breakout_watchlist_df()
+    early_watch         = db.get_todays_early_watch_df(scan_date)
+    active_tracking     = db.get_active_tracking_df()
+    historical          = db.get_historical_signals_df()
+
+    n_confirmed = len(confirmed_breakouts) if not confirmed_breakouts.empty else 0
+    log.info("Confirmed Breakouts today: %d", n_confirmed)
 
     output_path = cfg.REPORTS_DIR / f"cup_handle_report_{scan_date}.xlsx"
     generate_excel_report(
-        todays_signals, watchlist, early_watch,
+        confirmed_breakouts, todays_signals, watchlist, early_watch,
         active_tracking, historical,
         summary_stats, output_path,
     )
