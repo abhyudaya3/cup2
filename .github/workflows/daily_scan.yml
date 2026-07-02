@@ -3,7 +3,7 @@ name: NSE Cup & Handle Daily Scan
 on:
   schedule:
     # 10:30 UTC = 4:00 PM IST, Monday-Friday (30 min after NSE close)
-    - cron: "30 10 * * 1-5"
+    - cron: "0 19 * * 0-4"
   workflow_dispatch:
     inputs:
       full_refresh:
